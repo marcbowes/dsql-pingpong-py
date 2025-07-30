@@ -6,8 +6,37 @@ A skeleton demonstration script for Amazon Aurora DSQL using SQLAlchemy.
 
 import argparse
 import boto3
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, BigInteger, Column
 from sqlalchemy.engine import URL
+from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.sql import text
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class PingPong(Base):
+    __tablename__ = "pingpong"
+    __table_args__ = {"schema": "demo"}
+    
+    id = Column(BigInteger, primary_key=True, autoincrement=False)
+    value = Column(BigInteger)
+
+
+def initialize(engine):
+    """Initialize the demo schema and tables."""
+    print("Initializing demo schema...")
+    
+    # Create schema
+    with engine.connect() as conn:
+        conn.execute(text("CREATE SCHEMA IF NOT EXISTS demo"))
+        conn.commit()
+    
+    # Create tables
+    Base.metadata.create_all(engine)
+    
+    print("Demo schema initialized")
 
 
 def create_sqlalchemy_engine(cluster_url, client, region):
@@ -35,6 +64,7 @@ def main():
     parser = argparse.ArgumentParser(description="DSQL PingPong Demo")
     parser.add_argument("--identifier", required=True, help="Cluster ID")
     parser.add_argument("--start", action="store_true", default=False, help="Start the demo")
+    parser.add_argument("--initialize", action="store_true", default=False, help="Initialize the schema then exit")
     
     args = parser.parse_args()
     
@@ -52,6 +82,11 @@ def main():
     
     # Initialize SQLAlchemy engine
     engine = create_sqlalchemy_engine(cluster_url, client, region)
+    
+    # Handle initialize flag
+    if args.initialize:
+        initialize(engine)
+        return
 
 
 if __name__ == "__main__":
