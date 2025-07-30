@@ -6,10 +6,11 @@ A skeleton demonstration script for Amazon Aurora DSQL using SQLAlchemy.
 
 import argparse
 import boto3
-from sqlalchemy import create_engine, event, BigInteger, Column
+from sqlalchemy import create_engine, event, Integer, Column
 from sqlalchemy.engine import URL
 from sqlalchemy.orm import DeclarativeBase, Session
 from sqlalchemy.sql import text
+from sqlalchemy.exc import DBAPIError
 
 
 class Base(DeclarativeBase):
@@ -20,8 +21,8 @@ class PingPong(Base):
     __tablename__ = "pingpong"
     __table_args__ = {"schema": "demo"}
     
-    id = Column(BigInteger, primary_key=True, autoincrement=False)
-    value = Column(BigInteger)
+    id = Column(Integer, primary_key=True, autoincrement=False)
+    value = Column(Integer)
 
 
 def initialize(engine):
@@ -66,29 +67,45 @@ def run_until_interrupted(start_flag, engine):
     
     try:
         while True:
-            # Read the singleton row
-            session = Session(engine)
-            row = session.query(PingPong).filter(PingPong.id == 1).first()
-            value = row.value
-            session.close()
-            
-            # Check if value read is higher than last value written by this instance
-            if value > lastValueWritten:
-                # Write the next value (current value + 1)
-                lastValueWritten = value + 1
-                
-                # Update the value in DSQL
+            try:
+                # Use a single transaction for the entire read-then-write operation
                 session = Session(engine)
-                session.query(PingPong).filter(PingPong.id == 1).update({PingPong.value: lastValueWritten})
-                session.commit()
+                
+                # Read the singleton row with SELECT FOR UPDATE to lock it
+                row = session.query(PingPong).filter(PingPong.id == 1).with_for_update().first()
+                value = row.value
+                
+                # Check if value read is higher than last value written by this instance
+                if value > lastValueWritten:
+                    # Calculate the next value (current value + 1)
+                    next_value = value + 1
+                    
+                    # Update the value in DSQL within the same transaction
+                    session.query(PingPong).filter(PingPong.id == 1).update({PingPong.value: next_value})
+                    session.commit()
+                    
+                    # Only update lastValueWritten AFTER successful commit
+                    lastValueWritten = next_value
+                    
+                    # Print Ping or Pong based on start flag
+                    message = "Ping" if start_flag else "Pong"
+                    print(f"{message} {lastValueWritten}", end="", flush=True)
+                else:
+                    # Value hasn't changed, just abort the transaction
+                    session.rollback()
+                    # Print a period without newline
+                    print(".", end="", flush=True)
+                
                 session.close()
                 
-                # Print Ping or Pong based on start flag
-                message = "Ping" if start_flag else "Pong"
-                print(f"{message} {lastValueWritten}", end="", flush=True)
-            else:
-                # Print a period without newline
-                print(".", end="", flush=True)
+            except DBAPIError as e:
+                session.rollback()
+                session.close()
+                if "OC000" in str(e) or "SerializationFailure" in str(e):
+                    # Don't change lastValueWritten - we didn't actually write anything
+                    print("X", end="", flush=True)
+                else:
+                    raise
     except KeyboardInterrupt:
         print("\nGame interrupted. Exiting...")
 
