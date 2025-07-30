@@ -47,6 +47,52 @@ def initialize(engine):
     print("Demo schema initialized")
 
 
+def start_game(engine):
+    """Start the game by updating the value to 1."""
+    session = Session(engine)
+    rows_updated = session.query(PingPong).filter(PingPong.id == 1).update({PingPong.value: 1})
+    session.commit()
+    session.close()
+    
+    assert rows_updated == 1, f"Expected to update 1 row, but updated {rows_updated} rows"
+    print("Started the game")
+
+
+def run_until_interrupted(start_flag, engine):
+    """Run the game loop until interrupted by Ctrl-C."""
+    # Initialize lastValueWritten: what this instance last wrote
+    # Starter wrote 1, non-starter wrote nothing (0)
+    lastValueWritten = 1 if start_flag else 0
+    
+    try:
+        while True:
+            # Read the singleton row
+            session = Session(engine)
+            row = session.query(PingPong).filter(PingPong.id == 1).first()
+            value = row.value
+            session.close()
+            
+            # Check if value read is higher than last value written by this instance
+            if value > lastValueWritten:
+                # Write the next value (current value + 1)
+                lastValueWritten = value + 1
+                
+                # Update the value in DSQL
+                session = Session(engine)
+                session.query(PingPong).filter(PingPong.id == 1).update({PingPong.value: lastValueWritten})
+                session.commit()
+                session.close()
+                
+                # Print Ping or Pong based on start flag
+                message = "Ping" if start_flag else "Pong"
+                print(f"{message} {lastValueWritten}", end="", flush=True)
+            else:
+                # Print a period without newline
+                print(".", end="", flush=True)
+    except KeyboardInterrupt:
+        print("\nGame interrupted. Exiting...")
+
+
 def create_sqlalchemy_engine(cluster_url, client, region):
     """Create SQLAlchemy engine for DSQL."""
     url = URL.create(
@@ -95,6 +141,12 @@ def main():
     if args.initialize:
         initialize(engine)
         return
+    
+    # Handle start flag
+    if args.start:
+        start_game(engine)
+    
+    run_until_interrupted(args.start, engine)
 
 
 if __name__ == "__main__":
