@@ -8,7 +8,7 @@ import argparse
 import boto3
 from sqlalchemy import create_engine, event, BigInteger, Column
 from sqlalchemy.engine import URL
-from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.orm import DeclarativeBase, Session
 from sqlalchemy.sql import text
 
 
@@ -33,8 +33,16 @@ def initialize(engine):
         conn.execute(text("CREATE SCHEMA IF NOT EXISTS demo"))
         conn.commit()
     
-    # Create tables
-    Base.metadata.create_all(engine)
+    # Drop and recreate the pingpong table
+    PingPong.__table__.drop(engine, checkfirst=True)
+    PingPong.__table__.create(engine)
+    
+    # Insert the single row with id=1, value=0
+    session = Session(engine)
+    initial_row = PingPong(id=1, value=0)
+    session.add(initial_row)
+    session.commit()
+    session.close()
     
     print("Demo schema initialized")
 
